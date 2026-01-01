@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Row mapping uses numpy arrays instead of dictionaries for faster lookups
 - Matrix slicing optimized with numpy boolean indexing
+- Minimum Python version requirement updated from 3.7 to 3.8 (Python 3.7 is EOL)
+- Added Python 3.13 to test matrix
+- Updated GitHub Actions workflows to use latest action versions
 
 ## [0.1.5] - 2024-12-31
 
