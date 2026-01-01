@@ -319,11 +319,12 @@ cdef class DLX:
         if not self.use_mask or row_id >= 64:
             return
         
-        cdef int col_idx, mask_idx, bit_idx
+        cdef int col_idx, mask_idx, bit_idx, flat_idx
         cdef uint64_t row_mask_val, active_mask_val
         
         # Cover all columns in the row mask, excluding the specified column
         # (which is already covered)
+        # Use standard iteration but check masks for efficiency
         for col_idx in range(self.num_cols):
             if col_idx == exclude_col_idx:
                 continue
@@ -331,15 +332,14 @@ cdef class DLX:
             mask_idx = col_idx // 64
             bit_idx = col_idx % 64
             
-            if mask_idx < 8:
+            if mask_idx < 8 and mask_idx < self.num_masks:
                 flat_idx = row_id * 8 + mask_idx
                 row_mask_val = self.row_masks_flat[flat_idx]
                 if (row_mask_val >> bit_idx) & 1:  # Column is in row mask
-                    # Check if column is still active
-                    if mask_idx < self.num_masks:
-                        active_mask_val = self.active_masks[mask_idx]
-                        if (active_mask_val >> bit_idx) & 1:  # Column is still active
-                            self.cover(self.columns[col_idx])
+                    # Check if column is still active before covering
+                    active_mask_val = self.active_masks[mask_idx]
+                    if (active_mask_val >> bit_idx) & 1:  # Column is still active
+                        self.cover(self.columns[col_idx])
     
     cdef void uncover_row_columns(self, int row_id, int exclude_col_idx=-1):
         """Uncover all columns for a given row using row mask (optimized)."""

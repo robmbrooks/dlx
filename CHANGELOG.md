@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2024-12-31
+
+### Fixed
+- Fixed critical stack overflow bug in `cover_row_columns()` for problems with >64 columns
+- Added bounds check to ensure `mask_idx < self.num_masks` before accessing active masks
+- Prevents infinite recursion when processing multi-mask problems (e.g., Sudoku with 324 columns)
+- Fixed potential access to invalid mask indices that could cause undefined behavior
+
 ## [0.1.3] - 2024-12-31
 
 ### Performance
