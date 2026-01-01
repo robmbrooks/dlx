@@ -20,7 +20,7 @@ extensions = [
 
 setup(
     name='dlx-cython',
-    version='0.1.1',
+    version='0.1.2',
     author='Robert Brooks',
     author_email='robmbrooks@gmail.com',
     description='DLX (Dancing Links) implementation in Cython',

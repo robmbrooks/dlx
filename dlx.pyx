@@ -53,11 +53,13 @@ cdef class DLX:
     cdef int num_rows
     cdef int num_cols
     cdef bool find_all
-    # Bitmask optimization for ≤64 columns
+    # Bitmask optimization - supports up to 512 columns (8 masks × 64 bits)
     cdef bool use_mask
-    cdef uint64_t active_mask
-    cdef int[64] col_sizes_mask  # Column sizes when using mask
-    cdef uint64_t[64] row_masks  # Bitmask for each row (constraint set)
+    cdef int num_masks  # Number of uint64_t masks needed
+    cdef uint64_t[8] active_masks  # Array of masks for active columns
+    cdef int[512] col_sizes_mask  # Column sizes when using mask (extended for >64)
+    # Row masks: flattened 1D array [row * 8 + mask_idx] - up to 64 rows, each with up to 8 masks
+    cdef uint64_t[512] row_masks_flat  # Flattened: 64 rows × 8 masks = 512 elements
     
     def __init__(self, int num_rows, int num_cols, object matrix):
         """
@@ -82,23 +84,34 @@ cdef class DLX:
         
         # Declare variables
         cdef Column col
-        cdef int i, j
+        cdef int i, j, mask_idx, bit_idx
         
-        # Use bitmask optimization for ≤64 columns
-        self.use_mask = (num_cols <= 64)
+        # Use bitmask optimization for ≤512 columns (8 masks × 64 bits)
+        self.use_mask = (num_cols <= 512)
+        self.num_masks = ((num_cols + 63) // 64) if self.use_mask else 0
         
         # Always create header node (needed for some code paths)
         self.header = Column("header", -1)
         
         if self.use_mask:
-            # Initialize bitmask: all columns active (bits 0 to num_cols-1 set)
-            self.active_mask = ((<uint64_t>1 << num_cols) - 1)
-            # Initialize column sizes array
-            for i in range(64):
+            # Initialize active masks: all columns active
+            for mask_idx in range(8):
+                self.active_masks[mask_idx] = 0
+            
+            # Set bits for columns that exist
+            for i in range(num_cols):
+                mask_idx = i // 64
+                bit_idx = i % 64
+                if mask_idx < 8:
+                    self.active_masks[mask_idx] |= (<uint64_t>1 << bit_idx)
+            
+            # Initialize column sizes array (extended to 512)
+            for i in range(512):
                 self.col_sizes_mask[i] = 0
-            # Initialize row masks (one bitmask per row)
-            for i in range(64):
-                self.row_masks[i] = 0
+            
+            # Initialize row masks flattened array (for up to 64 rows)
+            for i in range(512):  # 64 rows × 8 masks
+                self.row_masks_flat[i] = 0
         
         # Create column headers (still needed for up/down node linking)
         
@@ -127,10 +140,6 @@ cdef class DLX:
         for i in range(num_rows):
             row_nodes = []
             
-            # Build bitmask for this row if using mask optimization
-            if self.use_mask and i < 64:
-                self.row_masks[i] = 0
-            
             for j in range(num_cols):
                 if mat[i, j] == 1:
                     node = Node()
@@ -139,7 +148,11 @@ cdef class DLX:
                     
                     # Update row bitmask if using mask optimization
                     if self.use_mask and i < 64:
-                        self.row_masks[i] |= (<uint64_t>1 << j)
+                        mask_idx = j // 64
+                        bit_idx = j % 64
+                        if mask_idx < 8:
+                            flat_idx = i * 8 + mask_idx
+                            self.row_masks_flat[flat_idx] |= (<uint64_t>1 << bit_idx)
                     
                     # Link to column
                     node.up = self.columns[j].up
@@ -169,13 +182,16 @@ cdef class DLX:
     
     cdef void cover(self, Column col):
         """Cover a column."""
-        cdef int col_idx
+        cdef int col_idx, mask_idx, bit_idx
         cdef Node i, j
         
         if self.use_mask:
             # Remove column from active mask using stored index
             col_idx = col.index
-            self.active_mask &= ~(<uint64_t>1 << col_idx)
+            mask_idx = col_idx // 64
+            bit_idx = col_idx % 64
+            if mask_idx < 8:
+                self.active_masks[mask_idx] &= ~(<uint64_t>1 << bit_idx)
         else:
             # Standard linked list removal
             col.right.left = col.left
@@ -196,7 +212,7 @@ cdef class DLX:
     
     cdef void uncover(self, Column col):
         """Uncover a column."""
-        cdef int col_idx
+        cdef int col_idx, mask_idx, bit_idx
         cdef Node i, j
         
         i = col.up
@@ -215,7 +231,10 @@ cdef class DLX:
         if self.use_mask:
             # Restore column to active mask using stored index
             col_idx = col.index
-            self.active_mask |= (<uint64_t>1 << col_idx)
+            mask_idx = col_idx // 64
+            bit_idx = col_idx % 64
+            if mask_idx < 8:
+                self.active_masks[mask_idx] |= (<uint64_t>1 << bit_idx)
         else:
             # Standard linked list restoration
             col.right.left = col
@@ -223,26 +242,51 @@ cdef class DLX:
     
     cdef Column choose_column(self):
         """Choose the column with the smallest size (S heuristic)."""
-        cdef int i, col_idx, min_size, best_idx
+        cdef int i, col_idx, min_size, best_idx, mask_idx, bit_idx
         cdef uint64_t mask, temp_mask
         cdef Column best, c
+        cdef bint any_active
         
         if self.use_mask:
-            # Use bitmask to find active columns
-            mask = self.active_mask
-            if mask == 0:
+            # Check if any columns are active (check all masks)
+            any_active = False
+            for mask_idx in range(self.num_masks):
+                if self.active_masks[mask_idx] != 0:
+                    any_active = True
+                    break
+            
+            if not any_active:
                 return None
             
             # Find column with smallest size among active columns
+            # Iterate only through active columns using bit manipulation
             best_idx = -1
             min_size = 999999  # Large number
             
-            for i in range(self.num_cols):
-                if (mask >> i) & 1:  # Column i is active
-                    # Use col_sizes_mask when using mask mode
-                    if self.col_sizes_mask[i] < min_size:
-                        min_size = self.col_sizes_mask[i]
-                        best_idx = i
+            for mask_idx in range(self.num_masks):
+                mask = self.active_masks[mask_idx]
+                if mask == 0:
+                    continue
+                
+                # Iterate through set bits in this mask
+                col_base = mask_idx * 64
+                temp_mask = mask
+                while temp_mask != 0:
+                    # Find the lowest set bit: temp_mask & -temp_mask
+                    # Then use bit manipulation to get the bit index
+                    bit_val = temp_mask & (~temp_mask + 1)  # Isolate lowest set bit
+                    bit_idx = 0
+                    while (bit_val >> bit_idx) != 1:
+                        bit_idx += 1
+                    
+                    i = col_base + bit_idx
+                    if i < self.num_cols:
+                        if self.col_sizes_mask[i] < min_size:
+                            min_size = self.col_sizes_mask[i]
+                            best_idx = i
+                    
+                    # Clear the lowest set bit
+                    temp_mask &= temp_mask - 1
             
             if best_idx == -1 or min_size == 0:
                 return None
@@ -270,26 +314,35 @@ cdef class DLX:
         if not self.use_mask or row_id >= 64:
             return
         
-        cdef uint64_t row_mask = self.row_masks[row_id]
-        cdef int col_idx
+        cdef int col_idx, mask_idx, bit_idx
+        cdef uint64_t row_mask_val, active_mask_val
         
         # Cover all columns in the row mask, excluding the specified column
         # (which is already covered)
         for col_idx in range(self.num_cols):
             if col_idx == exclude_col_idx:
                 continue
-            if (row_mask >> col_idx) & 1:
-                # Only cover if column is still active (not already covered)
-                if (self.active_mask >> col_idx) & 1:
-                    self.cover(self.columns[col_idx])
+            
+            mask_idx = col_idx // 64
+            bit_idx = col_idx % 64
+            
+            if mask_idx < 8:
+                flat_idx = row_id * 8 + mask_idx
+                row_mask_val = self.row_masks_flat[flat_idx]
+                if (row_mask_val >> bit_idx) & 1:  # Column is in row mask
+                    # Check if column is still active
+                    if mask_idx < self.num_masks:
+                        active_mask_val = self.active_masks[mask_idx]
+                        if (active_mask_val >> bit_idx) & 1:  # Column is still active
+                            self.cover(self.columns[col_idx])
     
     cdef void uncover_row_columns(self, int row_id, int exclude_col_idx=-1):
         """Uncover all columns for a given row using row mask (optimized)."""
         if not self.use_mask or row_id >= 64:
             return
         
-        cdef uint64_t row_mask = self.row_masks[row_id]
-        cdef int col_idx
+        cdef int col_idx, mask_idx, bit_idx
+        cdef uint64_t row_mask_val
         
         # Uncover in reverse order for proper backtracking, excluding the specified column
         col_idx = self.num_cols - 1
@@ -297,8 +350,16 @@ cdef class DLX:
             if col_idx == exclude_col_idx:
                 col_idx -= 1
                 continue
-            if (row_mask >> col_idx) & 1:
-                self.uncover(self.columns[col_idx])
+            
+            mask_idx = col_idx // 64
+            bit_idx = col_idx % 64
+            
+            if mask_idx < 8:
+                flat_idx = row_id * 8 + mask_idx
+                row_mask_val = self.row_masks_flat[flat_idx]
+                if (row_mask_val >> bit_idx) & 1:  # Column is in row mask
+                    self.uncover(self.columns[col_idx])
+            
             col_idx -= 1
     
     cdef bint is_row_valid(self, int row_id, int exclude_col_idx=-1):
@@ -306,24 +367,40 @@ cdef class DLX:
         if not self.use_mask or row_id >= 64:
             return True  # Fall back to standard validation
         
-        cdef uint64_t row_mask = self.row_masks[row_id]
-        # If exclude_col_idx is specified, temporarily add it back to active_mask for checking
-        # This is because we're checking validity AFTER covering column c, but column c
-        # is part of the row, so we should consider it as "active" for validity purposes
-        cdef uint64_t check_mask = self.active_mask
-        if exclude_col_idx >= 0 and exclude_col_idx < self.num_cols:
-            check_mask |= (<uint64_t>1 << exclude_col_idx)
+        cdef int mask_idx, bit_idx
+        cdef uint64_t row_mask_val, check_mask_val
         
-        # Row is valid if at least one column it covers is still active
-        # (including the excluded column, since it's part of the row)
-        return (row_mask & check_mask) != 0
+        # Check each mask for this row
+        for mask_idx in range(self.num_masks):
+            flat_idx = row_id * 8 + mask_idx
+            row_mask_val = self.row_masks_flat[flat_idx]
+            check_mask_val = self.active_masks[mask_idx]
+            
+            # If exclude_col_idx is in this mask, temporarily add it back
+            if exclude_col_idx >= 0 and exclude_col_idx < self.num_cols:
+                exclude_mask_idx = exclude_col_idx // 64
+                exclude_bit_idx = exclude_col_idx % 64
+                if exclude_mask_idx == mask_idx:
+                    check_mask_val |= (<uint64_t>1 << exclude_bit_idx)
+            
+            # Row is valid if at least one column it covers is still active
+            if (row_mask_val & check_mask_val) != 0:
+                return True
+        
+        return False
     
     cdef void search(self, int k):
         """Recursive search for solutions."""
         # Check if solution found
         cdef bint solution_found = False
+        cdef int mask_idx
         if self.use_mask:
-            solution_found = (self.active_mask == 0)
+            # Check if all masks are zero (all columns covered)
+            solution_found = True
+            for mask_idx in range(self.num_masks):
+                if self.active_masks[mask_idx] != 0:
+                    solution_found = False
+                    break
         else:
             solution_found = (self.header.right == self.header)
         

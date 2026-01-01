@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2024-12-31
+
+### Performance
+- Optimized `choose_column()` to iterate only through active columns using efficient bit manipulation
+- Extended bitmask optimization to support problems with up to 512 columns (multi-mask support)
+- Improved performance for larger problems: ~6% faster for multi-mask problems (200+ columns)
+- Better cache locality with optimized bit iteration
+
+### Changed
+- Bitmask optimization now automatically enabled for problems with ≤512 columns (previously ≤64)
+- Multi-mask support uses up to 8 `uint64_t` masks for larger problems
+- Column selection now uses bitwise iteration instead of checking all columns
+- Row mask support extended to handle problems with more columns
+
+### Fixed
+- Fixed `choose_column()` inefficiency where all columns were checked instead of only active ones
+- Improved bit manipulation efficiency in column selection
+
 ## [0.1.1] - 2024-XX-XX
 
 ### Added
