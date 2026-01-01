@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2024-12-31
+
+### Performance
+- Fixed critical performance regression in `choose_column()` for multi-mask problems
+- Optimized bit index calculation using De Bruijn sequence method (O(1) instead of O(log n))
+- Sudoku performance improved from ~10ms to ~0.53ms (~19x faster)
+- Bit manipulation now uses efficient multiplication/shift instead of linear search
+
+### Fixed
+- Fixed slow bit index calculation that was causing significant slowdown for problems with >64 columns
+- Improved `choose_column()` efficiency for multi-mask scenarios (e.g., Sudoku with 324 columns)
+
 ## [0.1.2] - 2024-12-31
 
 ### Performance

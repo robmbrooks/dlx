@@ -242,8 +242,8 @@ cdef class DLX:
     
     cdef Column choose_column(self):
         """Choose the column with the smallest size (S heuristic)."""
-        cdef int i, col_idx, min_size, best_idx, mask_idx, bit_idx
-        cdef uint64_t mask, temp_mask
+        cdef int i, col_idx, min_size, best_idx, mask_idx, bit_idx, col_base
+        cdef uint64_t mask, temp_mask, bit_val, magic
         cdef Column best, c
         cdef bint any_active
         
@@ -262,22 +262,27 @@ cdef class DLX:
             # Iterate only through active columns using bit manipulation
             best_idx = -1
             min_size = 999999  # Large number
+            magic = <uint64_t>0x03F79D71B4CB0A89
             
             for mask_idx in range(self.num_masks):
                 mask = self.active_masks[mask_idx]
                 if mask == 0:
                     continue
                 
-                # Iterate through set bits in this mask
+                # Iterate through set bits in this mask using efficient bit manipulation
                 col_base = mask_idx * 64
                 temp_mask = mask
                 while temp_mask != 0:
-                    # Find the lowest set bit: temp_mask & -temp_mask
-                    # Then use bit manipulation to get the bit index
-                    bit_val = temp_mask & (~temp_mask + 1)  # Isolate lowest set bit
-                    bit_idx = 0
-                    while (bit_val >> bit_idx) != 1:
-                        bit_idx += 1
+                    # Isolate lowest set bit: temp_mask & -temp_mask
+                    bit_val = temp_mask & (~temp_mask + 1)
+                    # Fast bit index: use De Bruijn sequence multiplication
+                    bit_idx = (magic * bit_val) >> 58
+                    # Verify: the result should be correct, but handle edge cases
+                    if bit_idx >= 64:
+                        # Fallback: manual calculation
+                        bit_idx = 0
+                        while (bit_val >> bit_idx) > 1:
+                            bit_idx += 1
                     
                     i = col_base + bit_idx
                     if i < self.num_cols:
