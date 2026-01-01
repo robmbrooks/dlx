@@ -11,7 +11,7 @@ A DLX (Dancing Links) algorithm implementation in Cython for solving exact cover
 
 ## Installation
 
-### From PyPI (when published)
+### From PyPI
 
 ```bash
 pip install dlx-cython
