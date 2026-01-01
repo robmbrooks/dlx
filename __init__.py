@@ -5,7 +5,7 @@ This package provides a DLX algorithm implementation
 for solving exact cover problems.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Robert Brooks"
 __email__ = "robmbrooks@gmail.com"
 
