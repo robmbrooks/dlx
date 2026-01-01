@@ -182,15 +182,22 @@ cdef class DLX:
     
     cdef void cover(self, Column col):
         """Cover a column."""
-        cdef int col_idx, mask_idx, bit_idx
+        cdef int col_idx, mask_idx, bit_idx, loop_count, max_iterations, inner_loop_count
         cdef Node i, j
         
+        # Safety check: prevent infinite loops
+        max_iterations = 1000000  # Reasonable upper bound
+        
         if self.use_mask:
-            # Remove column from active mask using stored index
+            # Check if column is already covered (not in active mask)
             col_idx = col.index
             mask_idx = col_idx // 64
             bit_idx = col_idx % 64
-            if mask_idx < 8:
+            if mask_idx < 8 and mask_idx < self.num_masks:
+                if (self.active_masks[mask_idx] >> bit_idx) & 1 == 0:
+                    # Column already covered, skip
+                    return
+                # Remove column from active mask
                 self.active_masks[mask_idx] &= ~(<uint64_t>1 << bit_idx)
         else:
             # Standard linked list removal
@@ -198,9 +205,20 @@ cdef class DLX:
             col.left.right = col.right
         
         i = col.down
+        loop_count = 0
         while i != col:
+            if loop_count >= max_iterations:
+                # Safety: break infinite loop
+                break
+            loop_count += 1
+            
             j = i.right
+            inner_loop_count = 0
             while j != i:
+                if inner_loop_count >= max_iterations:
+                    break
+                inner_loop_count += 1
+                
                 j.down.up = j.up
                 j.up.down = j.down
                 j.column.size -= 1
