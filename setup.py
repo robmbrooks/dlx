@@ -62,10 +62,6 @@ setup(
     install_requires=[
         'numpy>=1.19.0',
     ],
-    setup_requires=[
-        'cython>=0.29.0',
-        'numpy>=1.19.0',
-    ],
     extras_require={
         'dev': [
             'pytest>=6.0.0',
